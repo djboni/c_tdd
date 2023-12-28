@@ -1,7 +1,7 @@
 #include "unity_fixture.h"
 
 #ifdef __AVR__
-#include "port.h"
+#    include "port.h"
 #endif /* __AVR__ */
 
 void run_all_tests(void);
@@ -23,7 +23,7 @@ int main(int argc, const char **argv) {
     int retval = UnityMain(argc, argv, run_all_tests);
 
 #ifdef __AVR__
-    while(1) {
+    while (1) {
         idle_wait_interrupt();
     }
 #endif /* __AVR__ */

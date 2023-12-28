@@ -43,8 +43,7 @@ pub fn build(b: *std.Build) !void {
     const allocator = gpa.allocator();
 
     // Generate test runner (update files only if necessary)
-    const test_runners_files = try unity_testrunner.generate_test_runner(
-        &test_files, test_runner, buffer_size, allocator);
+    const test_runners_files = try unity_testrunner.generate_test_runner(&test_files, test_runner, buffer_size, allocator);
     defer {
         for (test_runners_files) |file_name|
             allocator.free(file_name);

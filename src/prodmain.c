@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 #ifdef __AVR__
-#include "port.h"
+#    include "port.h"
 #endif /* __AVR__ */
 
 int main(int argc, const char **argv) {
@@ -36,7 +36,7 @@ int main(int argc, const char **argv) {
     printf("%d\n", result);
 
 #ifdef __AVR__
-    while(1) {
+    while (1) {
         idle_wait_interrupt();
     }
 #endif /* __AVR__ */
