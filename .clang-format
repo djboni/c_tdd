@@ -1,0 +1,12 @@
+---
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+BasedOnStyle: LLVM
+IndentWidth: 4
+AlignAfterOpenBracket: DontAlign
+AllowShortFunctionsOnASingleLine: None
+IndentPPDirectives: AfterHash
+AlignEscapedNewlines: DontAlign
+ColumnLimit: 0
+TypenameMacros:
+  # Unity/CppUTest test suite macro
+  - TEST_GROUP

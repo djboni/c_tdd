@@ -1,0 +1,31 @@
+---
+repos:
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: ea59a72ffc9a1ce6b79b02a8076d031aa7ea7805 # 15.0.7
+    hooks:
+      - id: clang-format
+        exclude: "^dep/|runner.c$"
+
+  - repo: local
+    hooks:
+      - id: zig-fmt
+        name: zig fmt
+        entry: zig fmt
+        language: system
+        types: [zig]
+        files: "\\.zig"
+        exclude: "^dep/"
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: f71fa2c1f9cf5cb705f73dffe4b21f7c61470ba9 # v4.4.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        exclude: "^dep/"
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: "^dep/"
+      - id: end-of-file-fixer
+        exclude: "^dep/"
+      - id: trailing-whitespace
+        exclude: "^dep/"
