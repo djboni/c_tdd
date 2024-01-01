@@ -1,7 +1,7 @@
 # Dependencies
 
 - [Unity](https://github.com/ThrowTheSwitch/Unity)
-  - Version: `bf56029 Merge pull request #656 from ThrowTheSwitch/platform_matrix`
+  - Version: `da5a45b Merge pull request #706 from Skinner927/add-help-to-test-binaries`
 
 Version:
 
