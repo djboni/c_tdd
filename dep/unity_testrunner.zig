@@ -1,180 +1,134 @@
 // Copyright (c) 2023 Djones A. Boni - MIT License
+
+// Generate test runners for Unity test files (test suites).
+//
+// Test:    zig test unity_testrunner.zig
+// Build:   zig build-exe -OReleaseSafe -static unity_testrunner.zig
+// Execute: ./unity_testrunner -o testrunner.c test_suite1.c test_suite2.c
+//
+// For every test file, a single test runner is produced. For example,
+// if the test file is called test/test_suite1.c, the generated test runner
+// file will be named test/runner/test_suite1_runner.c.
+//
+// An additional test runner file is created in test/runner/testrunner.c.
+// This file contains the function `run_all_tests()`, which calls each
+// of the individual test runners for the test files.
+// To change this default output file path, use the option `-o OUTPUT_FILE.c`.
+//
+// Here's what your main file (ex: testmain.c) should look like:
+//
+// ```c
+// #include "unity_fixture.h"
+//
+// void run_all_tests(void);
+//
+// int main(int argc, const char **argv) {
+//     return UnityMain(argc, argv, run_all_tests);
+// }
+// ```
+//
+// And here's what your test files (ex: test_suite1.c) should look like:
+//
+// ```c
+// #include "unity_fixture.h"
+//
+// TEST_GROUP(suite1);
+//
+// TEST_SETUP(suite1) {
+// }
+//
+// TEST_TEAR_DOWN(suite1) {
+// }
+//
+// TEST(suite1, this_test_fails) {
+//     FAIL("Fail this test");
+// }
+// ```
+
 const std = @import("std");
+const nomake = @import("./nomake.zig");
 
-const runner_append_name = "_runner.c";
+/// Main function for standalone executable
+pub fn main() !void {
+    // Allocator used by the test runner generator
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() == .leak) @panic("memory leak");
+    const allocator = gpa.allocator();
 
-/// Read an entire file. Returns a string with the file contents.
-/// The caller must free the returned value.
-pub fn read_entire_file(file: []const u8, buffer_size: usize, allocator: std.mem.Allocator) ![]const u8 {
-    var fp = try std.fs.cwd().openFile(file, .{});
-    defer fp.close();
-    return fp.readToEndAlloc(allocator, buffer_size);
-}
+    // error: FileTooBig
+    // error: NoSpaceLeft
+    var buffer_size: usize = 1048576; // 1 MiB
 
-/// Write an entire file, truncate if it already exists.
-pub fn write_entire_file(file: []const u8, data: []const u8) !void {
-    var fp = try std.fs.cwd().createFile(file, .{ .truncate = true });
-    defer fp.close();
-    try fp.writeAll(data);
-}
+    var test_runner: []const u8 = "./test/runner/testrunner.c";
+    var test_files = try allocator.alloc([]const u8, 0);
+    defer allocator.free(test_files);
 
-/// Write an entire file if the requested data is different than the current
-/// data, truncating the file. The file is read and compared to the requested
-/// data. The file is created if it does not exist.
-pub fn write_entire_file_if_changed(file: []const u8, data: []const u8, buffer_size: usize, allocator: std.mem.Allocator) !void {
-    // Read the file (the file may not exist: FileNotFound)
-    const current_data_or_error = read_entire_file(file, buffer_size, allocator);
+    // Get command line arguments
+    const argv = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, argv);
 
-    if (current_data_or_error) |current_data| {
-        // Compare the new and the current file and overwrite if they differ
-        defer allocator.free(current_data);
-        if (!std.mem.eql(u8, data, current_data))
-            try write_entire_file(file, data);
-    } else |err| {
-        if (err == error.FileNotFound) {
-            // Create the file since it does not exist yet
-            try write_entire_file(file, data);
-        } else {
-            // Return any other error
-            return err;
-        }
-    }
-}
-
-/// Simple enough tokenizer for C source files.
-const Tokenizer = struct {
-    data: []const u8,
-    position: usize,
-
-    fn skip_whitespace(tokenizer: *Tokenizer) []const u8 {
-        var end: usize = tokenizer.position;
-        defer tokenizer.position = end;
-        while (tokenizer.peek(end)) |ch| {
-            if (!std.ascii.isWhitespace(ch))
-                break;
-            end += 1;
-        }
-        return tokenizer.data[tokenizer.position..end];
-    }
-
-    fn skip_to_eol(tokenizer: *Tokenizer) []const u8 {
-        var end: usize = tokenizer.position;
-        defer tokenizer.position = end;
-        while (tokenizer.peek(end)) |ch| {
-            if (ch == '\n')
-                break;
-            end += 1;
-        }
-        return tokenizer.data[tokenizer.position..end];
-    }
-
-    fn skip_to_token(tokenizer: *Tokenizer, token: []const u8) []const u8 {
-        var start: usize = tokenizer.position;
-        while (tokenizer.next()) |next_token| {
-            if (std.mem.eql(u8, token, next_token))
-                break;
-        }
-        return tokenizer.data[start..tokenizer.position];
-    }
-
-    fn skip_to_end_of_pound_expression(tokenizer: *Tokenizer) []const u8 {
-        var end: usize = tokenizer.position;
-        defer tokenizer.position = end;
-        while (tokenizer.peek(end)) |ch| {
-            // Continue on escaped new lines
-            if (ch == '\n' and tokenizer.peek(end - 1).? != '\\')
-                break;
-            end += 1;
-        }
-        return tokenizer.data[tokenizer.position..end];
-    }
-
-    fn peek(tokenizer: *Tokenizer, position: usize) ?u8 {
-        if (position < tokenizer.data.len) {
-            return tokenizer.data[position];
-        } else {
-            return null;
-        }
-    }
-
-    fn next(tokenizer: *Tokenizer) ?[]const u8 {
-        _ = tokenizer.skip_whitespace();
-        var start: usize = tokenizer.position;
-        var end: usize = start;
-        while (end < tokenizer.data.len) {
-            const ch = tokenizer.data[end];
-
-            if (std.ascii.isWhitespace(ch)) {
-                break;
-            } else if (ch == '/') {
-                if (start == end) {
-                    if (tokenizer.peek(end + 1)) |next_ch| {
-                        if (next_ch == '/') {
-                            // Start of a C++ style comment (//)
-                            tokenizer.position += 2;
-                            _ = tokenizer.skip_to_eol().len;
-                            end = tokenizer.position;
-                        } else if (next_ch == '*') {
-                            // Start of a C style comment (/* */)
-                            tokenizer.position += 2;
-                            _ = tokenizer.skip_to_token("*/").len;
-                            end = tokenizer.position;
-                        } else {
-                            end += 1;
-                        }
-                    }
-                }
-                break;
-            } else if (ch == '*') {
-                if (start == end) {
-                    if (tokenizer.peek(end + 1)) |next_ch| {
-                        if (next_ch == '/') {
-                            // End of a C style comment (/* */)
-                            end += 2;
-                        } else {
-                            end += 1;
-                        }
-                    }
-                }
-                break;
-            } else if (ch == '(' or ch == ')' or ch == '[' or ch == ']' or ch == '{' or ch == '}' or ch == ',' or ch == ';') {
-                if (start == end)
-                    end += 1;
-                break;
-            } else if (ch == '"') {
-                while (tokenizer.peek(end + 1)) |next_ch| {
-                    if (next_ch == '\\') {
-                        // Escaped character
-                        end += 2;
-                    } else if (next_ch == '"') {
-                        // End of string
-                        end += 2;
-                        break;
-                    } else {
-                        end += 1;
-                    }
-                }
-                break;
+    // Process command line arguments
+    const program = argv[0];
+    var n: usize = 1;
+    while (n < argv.len) : (n += 1) {
+        const option = argv[n];
+        if (std.mem.eql(u8, "-h", option)) {
+            // Help (-h)
+            std.debug.print(
+                \\Usage: {s} [-h] [-b BUFFER_SIZE] [-o OUTPUT_FILE] INPUT_FILES...
+                \\
+                \\Generate test runners for Unity test files.
+                \\
+                \\Options:
+                \\-h              show this help message.
+                \\-b BUFFER_SIZE  set allocated buffer size (defaults to 1048576 bytes).
+                \\-o OUTPUT_FILE  additional output file (defaults to ./test/runner/testrunner.c).
+                \\
+            , .{program});
+            std.os.exit(1);
+        } else if (std.mem.eql(u8, "-b", option)) {
+            // Allocated buffer size (-b)
+            if (n + 1 < argv.len) {
+                n += 1;
+                const buf = argv[n];
+                buffer_size = try std.fmt.parseUnsigned(usize, buf, 10);
             } else {
-                end += 1;
+                std.debug.print("{s}: ERROR: Missing allocated buffer size after \"{s}\"\n", .{ program, option });
+                std.os.exit(1);
             }
-        }
-
-        if (end > tokenizer.data.len)
-            end = tokenizer.data.len;
-        defer tokenizer.position = end;
-        if (end < tokenizer.data.len or start != end) {
-            return tokenizer.data[start..end];
+        } else if (std.mem.eql(u8, "-o", option)) {
+            // Output file (-o)
+            if (n + 1 < argv.len) {
+                n += 1;
+                test_runner = argv[n];
+            } else {
+                std.debug.print("{s}: ERROR: Missing output file after \"{s}\"\n", .{ program, option });
+                std.os.exit(1);
+            }
+        } else if (std.mem.startsWith(u8, option, "-")) {
+            // Unknown option
+            std.debug.print("{s}: ERROR: Unknown option \"{s}\"\n", .{ program, option });
+            std.os.exit(1);
         } else {
-            return null;
+            // Input file
+            test_files = try allocator.realloc(test_files, test_files.len + 1);
+            test_files[test_files.len - 1] = option;
         }
     }
-};
+
+    // Generate test runner (update files only if necessary)
+    const test_runners_files = try generate_test_runner(test_files, test_runner, buffer_size, allocator);
+    defer {
+        for (test_runners_files) |file_name|
+            allocator.free(file_name);
+        allocator.free(test_runners_files);
+    }
+}
 
 /// Generate a runner for a test file. Returns the content of the generated
 /// file. The caller must free the returned value.
 fn generate_test_file_runner(test_file_code: []const u8, all_test_groups: *std.StringArrayHashMap(void), buffer_size: usize, allocator: std.mem.Allocator) ![]const u8 {
-    var tokenizer = Tokenizer{ .data = test_file_code, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = test_file_code, .position = 0 };
 
     const State = enum {
         NOTHING,
@@ -196,7 +150,7 @@ fn generate_test_file_runner(test_file_code: []const u8, all_test_groups: *std.S
     var test_case: []const u8 = undefined;
 
     var size: usize = 0;
-    var generated_runner = try allocator.alloc(u8, buffer_size);
+    const generated_runner = try allocator.alloc(u8, buffer_size);
     defer allocator.free(generated_runner);
     var test_case_created: bool = false;
 
@@ -210,17 +164,23 @@ fn generate_test_file_runner(test_file_code: []const u8, all_test_groups: *std.S
         } else if (std.mem.startsWith(u8, token, "/*")) {
             // C style comment (/* */)
             continue;
-        } else if (std.mem.eql(u8, "#include", token)) {
+        } else if (std.mem.startsWith(u8, token, "#") and std.mem.endsWith(u8, token, "include")) {
             // #include
             const include_file = tokenizer.skip_to_eol();
             size += (try std.fmt.bufPrint(generated_runner[size..], "{s}{s}\n", .{ token, include_file })).len;
             continue;
-        } else if (std.mem.eql(u8, "#define", token) or std.mem.eql(u8, "#undef", token)) {
+        } else if (std.mem.startsWith(u8, token, "#") and
+            (std.mem.endsWith(u8, token, "define") or std.mem.endsWith(u8, token, "undef")))
+        {
             // #define #undef
             const expression = tokenizer.skip_to_end_of_pound_expression();
             size += (try std.fmt.bufPrint(generated_runner[size..], "{s}{s}\n", .{ token, expression })).len;
             continue;
-        } else if (std.mem.eql(u8, "#if", token) or std.mem.eql(u8, "#elif", token) or std.mem.eql(u8, "#ifdef", token) or std.mem.eql(u8, "#ifndef", token) or std.mem.eql(u8, "#else", token) or std.mem.eql(u8, "#endif", token)) {
+        } else if (std.mem.startsWith(u8, token, "#") and
+            (std.mem.endsWith(u8, token, "if") or std.mem.endsWith(u8, token, "elif") or
+            std.mem.endsWith(u8, token, "ifdef") or std.mem.endsWith(u8, token, "ifndef") or
+            std.mem.endsWith(u8, token, "else") or std.mem.endsWith(u8, token, "endif")))
+        {
             // #if #elif #ifdef #ifndef #else #endif
             const expression = tokenizer.skip_to_end_of_pound_expression();
             size += (try std.fmt.bufPrint(generated_runner[size..], "{s}{s}\n", .{ token, expression })).len;
@@ -317,7 +277,7 @@ fn generate_test_file_runner(test_file_code: []const u8, all_test_groups: *std.S
 /// generated file. The caller must free the returned value.
 fn generate_main_runner(all_test_groups: *std.StringArrayHashMap(void), buffer_size: usize, allocator: std.mem.Allocator) ![]const u8 {
     var size: usize = 0;
-    var generated_runner = try allocator.alloc(u8, buffer_size);
+    const generated_runner = try allocator.alloc(u8, buffer_size);
     defer allocator.free(generated_runner);
 
     size += (try std.fmt.bufPrint(generated_runner[size..], "/* AUTOGENERATED FILE. DO NOT EDIT. */\n", .{})).len;
@@ -347,7 +307,7 @@ fn add_test_group(all_test_groups: *std.StringArrayHashMap(void), group: []const
 /// the files created. The caller must free the returned value and its elements.
 pub fn generate_test_runner(file_names: []const []const u8, runner_file_name: []const u8, buffer_size: usize, allocator: std.mem.Allocator) ![]const []const u8 {
     var test_runner_file_count: usize = 0;
-    var test_runners_files = try allocator.alloc([]const u8, file_names.len + 1);
+    const test_runners_files = try allocator.alloc([]const u8, file_names.len + 1);
     errdefer {
         // On error free the file names of the test runners
         var i: usize = 0;
@@ -366,27 +326,35 @@ pub fn generate_test_runner(file_names: []const []const u8, runner_file_name: []
 
     // Generate the test file runners
     for (file_names) |file_name| {
-        const test_file_code = try read_entire_file(file_name, buffer_size, allocator);
+        const test_file_code = try nomake.readEntireFile(file_name, buffer_size, allocator);
         defer allocator.free(test_file_code);
 
-        var generated_runner = try generate_test_file_runner(test_file_code, &all_test_groups, buffer_size, allocator);
+        const generated_runner = try generate_test_file_runner(test_file_code, &all_test_groups, buffer_size, allocator);
         defer allocator.free(generated_runner);
 
-        // Creathe the name of the test file runner: file.c -> file_runner.c
-        var test_runner_file_name_buffer = try allocator.alloc(u8, file_name.len + runner_append_name.len);
-        defer allocator.free(test_runner_file_name_buffer);
-        const test_runner_file_name = try std.fmt.bufPrint(test_runner_file_name_buffer, "{s}{s}", .{ file_name[0 .. file_name.len - 2], runner_append_name });
+        const runner_name = try std.mem.concat(allocator, u8, &.{
+            std.fs.path.stem(file_name),
+            "_runner",
+            std.fs.path.extension(file_name),
+        });
+        defer allocator.free(runner_name);
+        const runner_path = try std.fs.path.join(allocator, &.{
+            std.fs.path.dirname(file_name) orelse ".",
+            "runner",
+            runner_name,
+        });
+        defer allocator.free(runner_path);
 
-        try write_entire_file_if_changed(test_runner_file_name, generated_runner, buffer_size, allocator);
-        test_runners_files[test_runner_file_count] = try allocator.dupe(u8, test_runner_file_name);
+        try nomake.writeEntireFileIfChanged(runner_path, generated_runner, buffer_size, allocator);
+        test_runners_files[test_runner_file_count] = try allocator.dupe(u8, runner_path);
         test_runner_file_count += 1;
     }
 
     // Generate the main test runner
-    var generated_main_runner = try generate_main_runner(&all_test_groups, buffer_size, allocator);
+    const generated_main_runner = try generate_main_runner(&all_test_groups, buffer_size, allocator);
     defer allocator.free(generated_main_runner);
 
-    try write_entire_file_if_changed(runner_file_name, generated_main_runner, buffer_size, allocator);
+    try nomake.writeEntireFileIfChanged(runner_file_name, generated_main_runner, buffer_size, allocator);
     test_runners_files[test_runner_file_count] = try allocator.dupe(u8, runner_file_name);
     // test_runner_file_count += 1;
 
@@ -415,7 +383,7 @@ test "tokens hello world" {
         "0",                   ";",
         "}",
     };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
@@ -443,7 +411,7 @@ test "tokens hello world 2" {
         "0",                   ";",
         "}",
     };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
@@ -461,7 +429,7 @@ test "tokens of string with escaped characters" {
         "\"test2\\n\\\\\"",
         "\"test3\\n\"",
     };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
@@ -476,7 +444,7 @@ test "tokens c++ style comment" {
         \\float
     ;
     const expected_tokens = [_][]const u8{ "int", "//comment", "float" };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
@@ -491,7 +459,7 @@ test "tokens c style comment" {
         \\comment_end*/float
     ;
     const expected_tokens = [_][]const u8{ "int", "/*comment_start\ncomment_end*/", "float" };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
@@ -509,7 +477,22 @@ test "tokens #if 0 comment" {
         \\float
     ;
     const expected_tokens = [_][]const u8{ "int", "#if", "0", "comment", "#endif", "float" };
-    var tokenizer = Tokenizer{ .data = data, .position = 0 };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
+    var i: usize = 0;
+    while (tokenizer.next()) |token| {
+        //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});
+        try std.testing.expectEqualStrings(expected_tokens[i], token);
+        i += 1;
+    }
+}
+
+test "tokens # include with spaces" {
+    const data =
+        \\# include <stdio.h>
+        \\#  include <lib.h>
+    ;
+    const expected_tokens = [_][]const u8{ "# include", "<stdio.h>", "#  include", "<lib.h>" };
+    var tokenizer = nomake.Tokenizer{ .data = data, .position = 0 };
     var i: usize = 0;
     while (tokenizer.next()) |token| {
         //std.debug.print("\"{s}\" == \"{s}\"\n", .{expected_tokens[i], token});

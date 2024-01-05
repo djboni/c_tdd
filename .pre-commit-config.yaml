@@ -4,7 +4,7 @@ repos:
     rev: ea59a72ffc9a1ce6b79b02a8076d031aa7ea7805 # 15.0.7
     hooks:
       - id: clang-format
-        exclude: "^dep/|runner.c$"
+        exclude: "^dep/.*/|runner.c$"
 
   - repo: local
     hooks:
@@ -14,18 +14,18 @@ repos:
         language: system
         types: [zig]
         files: "\\.zig"
-        exclude: "^dep/"
+        exclude: "^dep/.*/"
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: f71fa2c1f9cf5cb705f73dffe4b21f7c61470ba9 # v4.4.0
     hooks:
       - id: check-yaml
         args: [--allow-multiple-documents]
-        exclude: "^dep/"
+        exclude: "^dep/.*/"
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: "^dep/"
+        exclude: "^dep/.*/"
       - id: end-of-file-fixer
-        exclude: "^dep/"
+        exclude: "^dep/.*/"
       - id: trailing-whitespace
-        exclude: "^dep/"
+        exclude: "^dep/.*/"
