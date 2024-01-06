@@ -359,23 +359,9 @@ pub fn createParentDirectory(path: []const u8) !void {
 pub fn deleteDirectory(dir_path: []const u8) !void {
     if (verbosity >= verb_info)
         std.debug.print("INFO: Removing directory {s}\n", .{dir_path});
+    if (dir_exists_cache != null)
+        dir_exists_cache.?.clearEntry(dir_path);
     try std.fs.cwd().deleteTree(dir_path);
-}
-
-pub fn shortenPath(path: []const u8) []const u8 {
-    // converts "././A/B//" to "A/B"
-    var short = path;
-    while (std.mem.endsWith(u8, short, "/"))
-        short = short[0 .. short.len - 1];
-    while (std.mem.startsWith(u8, short, "./"))
-        short = short[2..];
-    if (builtin.os.tag == .windows) {
-        while (std.mem.endsWith(u8, short, "\\"))
-            short = short[0 .. short.len - 1];
-        while (std.mem.startsWith(u8, short, ".\\"))
-            short = short[2..];
-    }
-    return short;
 }
 
 /// The caller must free the returned value.
@@ -383,7 +369,7 @@ pub fn splitBySpaces(allocator: std.mem.Allocator, long_string: []const u8) ![]c
     var slices = try CmdLine.init(allocator);
     defer slices.deinit();
 
-    var iter = std.mem.splitAny(u8, long_string, " ");
+    var iter = std.mem.tokenizeAny(u8, long_string, " ");
     while (iter.next()) |slice|
         try slices.add(slice);
 
@@ -539,7 +525,7 @@ fn getFileMtime(file: []const u8) !i128 {
 fn privNeedsRebuildOne(target: []const u8, target_mtime: i128, dep: []const u8) bool {
     const dep_mtime = getFileMtimeCache(dep) catch return {
         if (verbosity >= verb_debug)
-            std.debug.print("DEBUG: Rebuilding target {s} because the dependency {s} does not exit\n", .{ target, dep });
+            std.debug.print("DEBUG: Rebuilding target {s} because the dependency {s} does not exist\n", .{ target, dep });
         clearMtimeCache(target);
         return true;
     };
@@ -853,120 +839,52 @@ pub const Tokenizer = struct {
     }
 };
 
-/// The caller must free the returned value.
-fn privGetCIncludedDependencies(allocator: std.mem.Allocator, content: []const u8) ![]const []const u8 {
-    var tokenizer = Tokenizer{ .data = content, .position = 0 };
-
-    var incl = try CmdLine.init(allocator);
-    defer incl.deinit();
-
-    while (tokenizer.next()) |token| {
-        // Special treatment for comments and preprocessor
-        if (std.mem.startsWith(u8, token, "//")) {
-            // C++ style comment (//)
-            continue;
-        } else if (std.mem.startsWith(u8, token, "/*")) {
-            // C style comment (/* */)
-            continue;
-        } else if (std.mem.startsWith(u8, token, "#") and std.mem.endsWith(u8, token, "include")) {
-            const include_file = std.mem.trim(u8, tokenizer.skip_to_eol(), " \"<>");
-            const duped_include_file = try allocator.dupe(u8, include_file);
-            try incl.add(duped_include_file);
-            continue;
-        } else if (std.mem.startsWith(u8, token, "#") and
-            (std.mem.endsWith(u8, token, "define") or std.mem.endsWith(u8, token, "undef")))
-        {
-            // #define #undef
-            _ = tokenizer.skip_to_end_of_pound_expression();
-            continue;
-        } else if (std.mem.startsWith(u8, token, "#") and
-            (std.mem.endsWith(u8, token, "if") or std.mem.endsWith(u8, token, "elif") or
-            std.mem.endsWith(u8, token, "ifdef") or std.mem.endsWith(u8, token, "ifndef") or
-            std.mem.endsWith(u8, token, "else") or std.mem.endsWith(u8, token, "endif")))
-        {
-            // #if #elif #ifdef #ifndef #else #endif
-            _ = tokenizer.skip_to_end_of_pound_expression();
-            continue;
-        }
-    }
-
-    // Return a new allocation with only the necessary size
-    return allocator.dupe([]const u8, incl.args);
-}
-
 /// The cache owns the retuned value and its content.
-pub fn getIncludedDependencies(c: BuildConfig, file: []const u8, cache_name: []const u8) ![]const []const u8 {
+pub fn getIncludedDependencies(c: BuildConfig, file: []const u8) ![]const []const u8 {
     if (included_files_cache == null) {
         // Cache lazy initialization.
         included_files_cache = Cache([]const u8, []const []const u8).init(cache_gpa.allocator());
     }
-    if (included_files_cache.?.get(cache_name)) |deps|
+    if (included_files_cache.?.get(file)) |deps|
         return deps;
 
-    var found = try CmdLine.init(included_files_cache.?.cache.allocator);
+    var found = try CmdLine.init(c.allocator);
     defer found.deinit();
     errdefer for (found.args) |f| included_files_cache.?.cache.allocator.free(f);
 
-    var not_found = try CmdLine.init(included_files_cache.?.cache.allocator);
-    defer not_found.deinit();
+    const obj_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "obj", file });
+    defer c.allocator.free(obj_noext);
+    const dep = try std.mem.concat(c.allocator, u8, &.{ obj_noext, ".d" });
+    defer c.allocator.free(dep);
 
-    const content = try readEntireFile(file, c.buffer_size, c.allocator);
+    const content = readEntireFile(dep, c.buffer_size, c.allocator) catch |err| switch (err) {
+        error.FileNotFound => return &[_][]const u8{},
+        else => return err,
+    };
     defer c.allocator.free(content);
 
-    const included_files = try privGetCIncludedDependencies(c.allocator, content);
-    defer {
-        for (included_files) |inc_file|
-            c.allocator.free(inc_file);
-        c.allocator.free(included_files);
+    var iter = std.mem.tokenizeAny(u8, content, " \n\r");
+    var i: usize = 0;
+    while (iter.next()) |path| {
+        if (std.mem.eql(u8, path, "") or std.mem.eql(u8, path, "\\"))
+            continue;
+        // Dep-file ".o: \ .c .h ..."
+        //      skip ^^^^^^^^
+        //               Keep ^^^^^^
+        if (i >= 2) {
+            const duped_path = try included_files_cache.?.cache.allocator.dupe(u8, path);
+            errdefer included_files_cache.?.cache.allocator.free(duped_path);
+            try found.add(duped_path);
+        }
+        i += 1;
     }
 
-    // Temporary add to the cache.
-    try included_files_cache.?.put(cache_name, included_files);
-    errdefer included_files_cache.?.clearEntry(cache_name);
-
-    for (included_files) |inc_file| {
-        var inc_found = false;
-        for (c.include_dirs) |dir| {
-            const path = try std.mem.concat(c.allocator, u8, &[_][]const u8{ dir[2..], inc_file });
-            defer c.allocator.free(path);
-
-            // Check if the file `path` exists
-            const fp = std.fs.cwd().openFile(path, .{}) catch |err| if (err == error.FileNotFound) {
-                continue;
-            } else {
-                return err;
-            };
-            defer fp.close();
-
-            const dep_included = try getIncludedDependencies(c, path, inc_file);
-
-            const duped_inc = try included_files_cache.?.cache.allocator.dupe(u8, path);
-            errdefer included_files_cache.?.cache.allocator.free(duped_inc);
-            try found.add(duped_inc);
-
-            for (dep_included) |dep|
-                try found.add(dep);
-
-            // The file `inc_file` was found in `path`
-            inc_found = true;
-            break;
-        }
-        if (!inc_found) {
-            try not_found.add(inc_file);
-            if (!included_files_cache.?.contains(inc_file))
-                try included_files_cache.?.put(inc_file, &[0][]const u8{});
-        }
-    }
-
-    // Final add to the cache.
     const list_cache = try included_files_cache.?.cache.allocator.dupe([]const u8, found.args);
     errdefer included_files_cache.?.cache.allocator.free(list_cache);
-    try included_files_cache.?.put(cache_name, list_cache);
+    try included_files_cache.?.put(file, list_cache);
 
     if (verbosity >= verb_debug) {
-        std.debug.print("DEBUG: Dependencies of file \"{s}\": \"{s}\"\n", .{ cache_name, list_cache });
-        if (not_found.args.len > 0)
-            std.debug.print("DEBUG: Could not find \"{s}\": \"{s}\"\n", .{ cache_name, not_found.args });
+        std.debug.print("DEBUG: Dependencies of file \"{s}\": \"{s}\"\n", .{ file, list_cache });
     }
 
     return list_cache;
@@ -977,16 +895,31 @@ pub fn buildSource(c: BuildConfig, src: []const u8, dependencies: anytype) ![]co
     if (verbosity >= verb_debug)
         std.debug.print("DEBUG: Building source file {s}\n", .{src});
 
-    const short_src = shortenPath(src);
-    const obj_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "obj", short_src });
+    const relative_src = try std.fs.path.relative(c.allocator, ".", src);
+    defer c.allocator.free(relative_src);
+    const obj_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "obj", relative_src });
     defer c.allocator.free(obj_noext);
     const obj = try std.mem.concat(c.allocator, u8, &.{ obj_noext, c.obj_extension });
     errdefer c.allocator.free(obj);
+    const dep = try std.mem.concat(c.allocator, u8, &.{ obj_noext, ".d" });
+    defer c.allocator.free(dep);
 
-    const included_depencies = try getIncludedDependencies(c, src, src);
+    // Very careful to avoid unedessarily calling needsRebuild(), which can
+    // reload the obj mtime into the cache before the build and cause
+    // another unecessary rebuild.
+    var needs_rebuild_dep = false;
+    if (needsRebuild(obj, .{ src, dependencies })) {
+        needs_rebuild_dep = true;
+    } else {
+        const included_depencies = try getIncludedDependencies(c, src);
+        if (needsRebuild(obj, included_depencies))
+            needs_rebuild_dep = true;
+    }
 
-    if (needsRebuild(obj, .{ src, dependencies, included_depencies })) {
+    if (needs_rebuild_dep) {
         try createParentDirectory(obj);
+        if (included_files_cache != null)
+            included_files_cache.?.clearEntry(src);
 
         var cmd = try CmdLine.init(c.allocator);
         defer cmd.deinit();
@@ -994,6 +927,7 @@ pub fn buildSource(c: BuildConfig, src: []const u8, dependencies: anytype) ![]co
         if (std.mem.eql(u8, std.fs.path.extension(src), ".c")) {
             try cmd.add(c.cc);
             try cmd.add(.{ "-c", "-o", obj, src });
+            try cmd.add(.{ "-MT", obj, "-MMD", "-MF", dep });
             try cmd.add(c.cflags);
             try cmd.add(c.include_dirs);
             try cmd.executeSync();
@@ -1011,8 +945,9 @@ pub fn buildLibrary(c: BuildConfig, lib: []const u8, srcs: []const []const u8, d
     if (verbosity >= verb_debug)
         std.debug.print("DEBUG: Building library \"{s}\"\n", .{lib});
 
-    const short_lib = shortenPath(lib);
-    const lib_final_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "lib", short_lib });
+    const relative_lib = try std.fs.path.relative(c.allocator, ".", lib);
+    defer c.allocator.free(relative_lib);
+    const lib_final_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "lib", relative_lib });
     defer c.allocator.free(lib_final_noext);
     const lib_final = try std.mem.concat(c.allocator, u8, &.{ lib_final_noext, c.lib_extension });
     errdefer c.allocator.free(lib_final);
@@ -1025,7 +960,7 @@ pub fn buildLibrary(c: BuildConfig, lib: []const u8, srcs: []const []const u8, d
         needs_rebuild_dep = true;
     } else {
         for (srcs) |src| {
-            const included_depencies = try getIncludedDependencies(c, src, src);
+            const included_depencies = try getIncludedDependencies(c, src);
             if (needsRebuild(lib_final, included_depencies)) {
                 needs_rebuild_dep = true;
                 break;
@@ -1062,8 +997,9 @@ pub fn buildExecutable(c: BuildConfig, exe: []const u8, objs: []const []const u8
     if (verbosity >= verb_debug)
         std.debug.print("DEBUG: Building executable \"{s}\"\n", .{exe});
 
-    const short_exe = shortenPath(exe);
-    const exe_final_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "bin", short_exe });
+    const relative_exe = try std.fs.path.relative(c.allocator, ".", exe);
+    defer c.allocator.free(relative_exe);
+    const exe_final_noext = try std.fs.path.join(c.allocator, &.{ c.build_dir, "bin", relative_exe });
     defer c.allocator.free(exe_final_noext);
     const exe_final = try std.mem.concat(c.allocator, u8, &.{ exe_final_noext, c.exec_extension });
     errdefer c.allocator.free(exe_final);
