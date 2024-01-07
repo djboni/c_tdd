@@ -192,11 +192,13 @@ var config = nomake.BuildConfig{
     .build_dir = undefined,
     .arch = undefined,
     .cc = undefined,
+    .cxx = undefined,
     .ld = undefined,
     .ar = undefined,
     .objcopy = undefined,
     .size = undefined,
     .cflags = undefined,
+    .cxxflags = undefined,
     .ldflags = undefined,
     .include_dirs = undefined,
     .obj_extension = undefined,
@@ -211,6 +213,7 @@ fn config_avr() !void {
     config.build_dir = "./out/avr";
     config.arch = "avr";
     config.cc = &[_][]const u8{"avr-gcc"};
+    config.cxx = &[_][]const u8{"avr-g++"};
     config.ld = &[_][]const u8{"avr-gcc"};
     config.ar = &[_][]const u8{"avr-ar"};
     config.objcopy = &[_][]const u8{"avr-objcopy"};
@@ -227,12 +230,25 @@ fn config_avr() !void {
     config.lib_extension = ".a";
     config.exec_extension = ".elf";
 
-    const default_clflags = &[_][]const u8{
+    const default_cflags = [_][]const u8{
         "-mmcu=atmega2560",
-        "-Os",
-        "-g3",
         "-std=c99",
         "-pedantic",
+        "-Os",
+        "-g3",
+        "-Wall",
+        "-Wextra",
+        "-Wundef",
+        "-Werror",
+        "-fdata-sections",
+        "-ffunction-sections",
+    };
+    const default_cxxflags = [_][]const u8{
+        "-mmcu=atmega2560",
+        "-std=c++11",
+        "-pedantic",
+        "-Os",
+        "-g3",
         "-Wall",
         "-Wextra",
         "-Wundef",
@@ -251,16 +267,21 @@ fn config_avr() !void {
     std.debug.print("CC Version: {!} - \"{s}\"\n", .{ parse(cc_version), cc_version });
 
     if (order(try parsed_version, try parse("12.1.0")).compare(.gte)) {
-        config.cflags = default_clflags ++ [_][]const u8{
+        const extra_flags = [_][]const u8{
             "--param=min-pagesize=0",
             "-Wno-clobbered",
         };
+        config.cflags = &(default_cflags ++ extra_flags);
+        config.cxxflags = &(default_cxxflags ++ extra_flags);
     } else if (order(try parsed_version, try parse("11.2.0")).compare(.gte)) {
-        config.cflags = default_clflags ++ [_][]const u8{
+        const extra_flags = [_][]const u8{
             "-Wno-clobbered",
         };
+        config.cflags = &(default_cflags ++ extra_flags);
+        config.cxxflags = &(default_cxxflags ++ extra_flags);
     } else {
-        config.cflags = default_clflags;
+        config.cflags = &default_cflags;
+        config.cxxflags = &default_cxxflags;
     }
 }
 
@@ -271,12 +292,21 @@ fn config_zigcc() void {
     config.build_dir = "./out/zigcc";
     config.arch = "host";
     config.cc = &[_][]const u8{ "zig", "cc" };
-    config.ld = &[_][]const u8{ "zig", "cc" };
+    config.cxx = &[_][]const u8{ "zig", "c++" };
+    config.ld = &[_][]const u8{ "zig", "c++" };
     config.ar = &[_][]const u8{ "zig", "ar" };
     config.objcopy = &[_][]const u8{ "zig", "objcopy" };
     config.size = &[_][]const u8{"size"};
     config.cflags = &[_][]const u8{
         "-std=c99",
+        "-pedantic",
+        "-Wall",
+        "-Wextra",
+        "-Wundef",
+        "-Werror",
+    };
+    config.cxxflags = &[_][]const u8{
+        "-std=c++11",
         "-pedantic",
         "-Wall",
         "-Wextra",
@@ -306,12 +336,21 @@ fn config_gcc() void {
     config.build_dir = "./out/gcc";
     config.arch = "host";
     config.cc = &[_][]const u8{"gcc"};
+    config.cxx = &[_][]const u8{"g++"};
     config.ld = &[_][]const u8{"gcc"};
     config.ar = &[_][]const u8{"ar"};
     config.objcopy = &[_][]const u8{"objcopy"};
     config.size = &[_][]const u8{"size"};
     config.cflags = &[_][]const u8{
         "-std=c99",
+        "-pedantic",
+        "-Wall",
+        "-Wextra",
+        "-Wundef",
+        "-Werror",
+    };
+    config.cxxflags = &[_][]const u8{
+        "-std=c++11",
         "-pedantic",
         "-Wall",
         "-Wextra",
@@ -341,12 +380,21 @@ fn config_clang() void {
     config.build_dir = "./out/clang";
     config.arch = "host";
     config.cc = &[_][]const u8{"clang"};
+    config.cxx = &[_][]const u8{"clang++"};
     config.ld = &[_][]const u8{"clang"};
     config.ar = &[_][]const u8{"llvm-ar"};
     config.objcopy = &[_][]const u8{"llvm-objcopy"};
     config.size = &[_][]const u8{"llvm-size"};
     config.cflags = &[_][]const u8{
         "-std=c99",
+        "-pedantic",
+        "-Wall",
+        "-Wextra",
+        "-Wundef",
+        "-Werror",
+    };
+    config.cxxflags = &[_][]const u8{
+        "-std=c++11",
         "-pedantic",
         "-Wall",
         "-Wextra",
@@ -419,12 +467,16 @@ pub fn main() !void {
             config.build_dir = option[10..];
         } else if (std.mem.startsWith(u8, option, "CC=")) {
             config.cc = try nomake.splitBySpaces(alleakator, option[3..]);
+        } else if (std.mem.startsWith(u8, option, "CXX=")) {
+            config.cc = try nomake.splitBySpaces(alleakator, option[4..]);
         } else if (std.mem.startsWith(u8, option, "LD=")) {
             config.ld = try nomake.splitBySpaces(alleakator, option[3..]);
         } else if (std.mem.startsWith(u8, option, "AR=")) {
             config.ar = try nomake.splitBySpaces(alleakator, option[3..]);
         } else if (std.mem.startsWith(u8, option, "CFLAGS=")) {
             config.cflags = try nomake.splitBySpaces(alleakator, option[7..]);
+        } else if (std.mem.startsWith(u8, option, "CXXFLAGS=")) {
+            config.cflags = try nomake.splitBySpaces(alleakator, option[9..]);
         } else if (std.mem.startsWith(u8, option, "LDFLAGS=")) {
             config.cflags = try nomake.splitBySpaces(alleakator, option[8..]);
         } else if (std.mem.startsWith(u8, option, "INCLUDE_DIRS=")) {
@@ -473,9 +525,11 @@ pub fn main() !void {
             std.mem.eql(u8, option, "--clang") or
             std.mem.startsWith(u8, option, "BUILD_DIR=") or
             std.mem.startsWith(u8, option, "CC=") or
+            std.mem.startsWith(u8, option, "CXX=") or
             std.mem.startsWith(u8, option, "LD=") or
             std.mem.startsWith(u8, option, "AR=") or
             std.mem.startsWith(u8, option, "CFLAGS=") or
+            std.mem.startsWith(u8, option, "CXXFLAGS=") or
             std.mem.startsWith(u8, option, "LDFLAGS=") or
             std.mem.startsWith(u8, option, "INCLUDE_DIRS=") or
             std.mem.startsWith(u8, option, "EXEC_EXTENSION=") or
@@ -563,10 +617,12 @@ fn show_help_message_and_exit(program: []const u8, error_message: ?[]const u8) v
         \\
         \\OPTIONS:
         \\    BUILD_DIR=dir             change build directory
-        \\    CC=cc                     change compiler
+        \\    CC=cc                     change C compiler
+        \\    CXX=c++                   change C++ compiler
         \\    LD=ld                     change linker
         \\    AR=ar                     change archiver
         \\    CFLAGS=cflags             change C compiler flags
+        \\    CXXFLAGS=cxxflags         change C++ compiler flags
         \\    LDFLAGS=ldflags           change linker flags
         \\    INCLUDE_DIRS="dir1 dir2"  change include directories
         \\    EXEC_EXTENSION=.ext       change executable extension

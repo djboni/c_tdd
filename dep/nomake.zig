@@ -639,11 +639,13 @@ pub const BuildConfig = struct {
     arch: []const u8,
     build_dir: []const u8,
     cc: []const []const u8,
+    cxx: []const []const u8,
     ld: []const []const u8,
     ar: []const []const u8,
     objcopy: []const []const u8,
     size: []const []const u8,
     cflags: []const []const u8,
+    cxxflags: []const []const u8,
     ldflags: []const []const u8,
     include_dirs: []const []const u8,
     obj_extension: []const u8,
@@ -927,9 +929,16 @@ pub fn buildSource(c: BuildConfig, src: []const u8, dependencies: anytype) ![]co
         if (std.mem.eql(u8, std.fs.path.extension(src), ".c")) {
             try cmd.add(c.cc);
             try cmd.add(.{ "-c", "-o", obj, src });
-            try cmd.add(.{ "-MT", obj, "-MMD", "-MF", dep });
             try cmd.add(c.cflags);
             try cmd.add(c.include_dirs);
+            try cmd.add(.{ "-MT", obj, "-MMD", "-MF", dep });
+            try cmd.executeSync();
+        } else if (std.mem.eql(u8, std.fs.path.extension(src), ".cpp")) {
+            try cmd.add(c.cxx);
+            try cmd.add(.{ "-c", "-o", obj, src });
+            try cmd.add(c.cxxflags);
+            try cmd.add(c.include_dirs);
+            try cmd.add(.{ "-MT", obj, "-MMD", "-MF", dep });
             try cmd.executeSync();
         } else {
             std.debug.print("ERROR: Not implemented this file type \"{s}\"\n", .{src});
