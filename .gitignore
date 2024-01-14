@@ -1,6 +1,7 @@
 zig-cache/
 zig-out/
-out/
-build
-build.*
-!build.zig
+/out/
+/build
+/build.*
+!/build.zig
+/dep/*/

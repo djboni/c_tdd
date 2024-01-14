@@ -28,6 +28,13 @@ const test_exe_files = [_][]const u8{
     "./test/testmain.c",
 };
 
+const host_cflags = [_][]const u8{
+    "-Wall",
+    "-Wextra",
+    "-Wundef",
+    "-Werror",
+};
+
 const include_dirs = [_][]const u8{
     "-I./include/",
     "-I./dep/unity/src/",
@@ -47,13 +54,9 @@ const test_unity_files = [_][]const u8{
 
 const test_runner = "./test/runner/testrunner.c";
 
-const host_zigcc_cflags = [_][]const u8{
+const host_zigcc_cflags = host_cflags ++ [_][]const u8{
     "-std=c99",
     "-pedantic",
-    "-Wall",
-    "-Wextra",
-    "-Wundef",
-    "-Werror",
 };
 
 // Too little buffer_size can cause these errors:
@@ -69,6 +72,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const unity_testrunner = @import("./dep/unity_testrunner.zig");
 const nomake = @import("./dep/nomake.zig");
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+// This allocator leaks on purpose, we never call gpa_leak.deinit().
+var gpa_leak = std.heap.GeneralPurposeAllocator(.{}){};
+const alleakator = gpa_leak.allocator();
 
 pub fn build(b: *std.Build) !void {
     defer if (gpa.deinit() == .leak) @panic("memory leak");
@@ -93,7 +102,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    b.installArtifact(libprod);
     libprod.linkLibC();
     for (include_dirs) |dir| libprod.addIncludePath(.{ .path = dir[2..] });
     libprod.addCSourceFiles(&production_lib_files, &host_zigcc_cflags);
@@ -105,7 +113,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    b.installArtifact(libtest);
     libtest.linkLibC();
     for (include_dirs) |dir| libtest.addIncludePath(.{ .path = dir[2..] });
     libtest.addCSourceFiles(&test_lib_files, &host_zigcc_cflags);
@@ -116,32 +123,11 @@ pub fn build(b: *std.Build) !void {
         .name = "libunity",
         .root_source_file = null,
         .target = target,
-        .optimize = optimize,
+        .optimize = .ReleaseFast,
     });
-    b.installArtifact(libunity);
     libunity.linkLibC();
     for (include_dirs) |dir| libunity.addIncludePath(.{ .path = dir[2..] });
     libunity.addCSourceFiles(&test_unity_files, &host_zigcc_cflags);
-
-    // Production executable
-    const execprod = b.addExecutable(.{
-        .name = "prod",
-        .root_source_file = null,
-        .target = target,
-        .optimize = optimize,
-    });
-    b.installArtifact(execprod);
-    execprod.linkLibC();
-    for (include_dirs) |dir| execprod.addIncludePath(.{ .path = dir[2..] });
-    execprod.linkLibrary(libprod);
-    execprod.addCSourceFiles(&production_exe_files, &host_zigcc_cflags);
-
-    const run_exe = b.addRunArtifact(execprod);
-    run_exe.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_exe.addArgs(args);
-    }
-    run_step.dependOn(&run_exe.step);
 
     // Test executable
     const exectest = b.addExecutable(.{
@@ -161,6 +147,34 @@ pub fn build(b: *std.Build) !void {
     const run_test = b.addRunArtifact(exectest);
     test_step.dependOn(&run_test.step);
     run_test.addArgs(&[_][]const u8{"-s"});
+
+    // Production executable
+    const execprod = b.addExecutable(.{
+        .name = "prod",
+        .root_source_file = null,
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(execprod);
+    execprod.linkLibC();
+    for (include_dirs) |dir| execprod.addIncludePath(.{ .path = dir[2..] });
+    execprod.linkLibrary(libprod);
+    execprod.addCSourceFiles(&production_exe_files, &host_zigcc_cflags);
+
+    if (target.os_tag == .windows or
+        (target.os_tag == null and builtin.os.tag == .windows))
+    {
+        execprod.linkSystemLibrary("opengl32");
+        execprod.linkSystemLibrary("gdi32");
+        execprod.linkSystemLibrary("winmm");
+    }
+
+    const run_exe = b.addRunArtifact(execprod);
+    run_exe.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_exe.addArgs(args);
+    }
+    run_step.dependOn(&run_exe.step);
 
     // Build tool executable
     const execbuildtool = b.addExecutable(.{
@@ -424,12 +438,6 @@ var serial_port: []const u8 = switch (builtin.os.tag) {
     .windows => "COM0",
     else => "/dev/ttyACM0",
 };
-
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
-// This allocator leaks on purpose, we never call gpa_leak.deinit().
-var gpa_leak = std.heap.GeneralPurposeAllocator(.{}){};
-const alleakator = gpa_leak.allocator();
 
 pub fn main() !void {
     const time_begin_ms = std.time.milliTimestamp();
