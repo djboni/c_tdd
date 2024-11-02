@@ -85,7 +85,7 @@ pub fn main() !void {
                 \\-o OUTPUT_FILE  additional output file (defaults to ./test/runner/testrunner.c).
                 \\
             , .{program});
-            std.os.exit(1);
+            std.process.exit(1);
         } else if (std.mem.eql(u8, "-b", option)) {
             // Allocated buffer size (-b)
             if (n + 1 < argv.len) {
@@ -94,7 +94,7 @@ pub fn main() !void {
                 buffer_size = try std.fmt.parseUnsigned(usize, buf, 10);
             } else {
                 std.debug.print("{s}: ERROR: Missing allocated buffer size after \"{s}\"\n", .{ program, option });
-                std.os.exit(1);
+                std.process.exit(1);
             }
         } else if (std.mem.eql(u8, "-o", option)) {
             // Output file (-o)
@@ -103,12 +103,12 @@ pub fn main() !void {
                 test_runner = argv[n];
             } else {
                 std.debug.print("{s}: ERROR: Missing output file after \"{s}\"\n", .{ program, option });
-                std.os.exit(1);
+                std.process.exit(1);
             }
         } else if (std.mem.startsWith(u8, option, "-")) {
             // Unknown option
             std.debug.print("{s}: ERROR: Unknown option \"{s}\"\n", .{ program, option });
-            std.os.exit(1);
+            std.process.exit(1);
         } else {
             // Input file
             test_files = try allocator.realloc(test_files, test_files.len + 1);

@@ -225,24 +225,24 @@ pub const CmdLine = struct {
     pub fn executeSync(cmd: *CmdLine) !void {
         cmd.print("EXEC(): ");
         const args = cmd.args[0..cmd.used];
-        var child = std.ChildProcess.init(args, cmd.allocator);
+        var child = std.process.Child.init(args, cmd.allocator);
         const term = try child.spawnAndWait();
         // std.debug.print("term={}\n", .{term});
         switch (term) {
             .Exited => |exit_val| {
                 if (exit_val != 0) {
                     std.debug.print("ERROR: The command returned an error {}\n", .{exit_val});
-                    std.os.exit(exit_val);
+                    std.process.exit(exit_val);
                 }
                 return;
             },
             .Signal => |signal_val| {
                 std.debug.print("ERROR: The command received the signal {}\n", .{signal_val});
-                std.os.exit(1);
+                std.process.exit(1);
             },
             else => {
                 std.debug.print("ERROR: Unexpected value {?}\n", .{term});
-                std.os.exit(1);
+                std.process.exit(1);
             },
         }
     }
@@ -252,7 +252,7 @@ pub const CmdLine = struct {
 
         cmd.print("EXEC_OUTPUT(): ");
         const args = cmd.args[0..cmd.used];
-        var child = std.ChildProcess.init(args, cmd.allocator);
+        var child = std.process.Child.init(args, cmd.allocator);
         child.stdout_behavior = .Pipe;
 
         var stdout = std.ArrayList(u8).init(cmd.allocator);
@@ -284,7 +284,7 @@ pub const CmdLine = struct {
         std.debug.print("EXEC_OUTPUT(timeout={}ms): ", .{timeout_ms});
         cmd.print("");
         const args = cmd.args[0..cmd.used];
-        var child = std.ChildProcess.init(args, cmd.allocator);
+        var child = std.process.Child.init(args, cmd.allocator);
         child.stdout_behavior = .Pipe;
 
         var stdout = std.ArrayList(u8).init(cmd.allocator);
@@ -314,7 +314,7 @@ pub const CmdLine = struct {
         allocator: std.mem.Allocator,
         stdout: []const u8,
         //stderr: []const u8,
-        term: std.ChildProcess.Term,
+        term: std.process.Child.Term,
 
         pub fn deinit(child: *const child_output) void {
             child.allocator.free(child.stdout);
@@ -322,10 +322,10 @@ pub const CmdLine = struct {
     };
 };
 
-fn killChildProcess(timeout: f64, child: *std.ChildProcess, output: *CmdLine.child_output) void {
+fn killChildProcess(timeout: f64, child: *std.process.Child, output: *CmdLine.child_output) void {
     const timeout_ns: u64 = @intFromFloat(timeout * 1e9);
     std.time.sleep(timeout_ns);
-    output.term = child.kill() catch std.ChildProcess.Term{ .Unknown = 92 };
+    output.term = child.kill() catch std.process.Child.Term{ .Unknown = 92 };
 }
 
 pub fn createDirectory(dir_path: []const u8) !void {
@@ -335,7 +335,7 @@ pub fn createDirectory(dir_path: []const u8) !void {
     }
     if (dir_exists_cache.?.get(dir_path) == null) {
         try dir_exists_cache.?.put(dir_path, {});
-        std.os.mkdir(dir_path, 0o777) catch |err| {
+        std.fs.cwd().makeDir(dir_path) catch |err| {
             switch (err) {
                 error.PathAlreadyExists => return,
                 else => {
@@ -594,7 +594,7 @@ pub fn rebuild(allocator: std.mem.Allocator, argv: []const []const u8, force_reb
             cmd.print("       ");
 
             // Exiting with an error
-            std.os.exit(1);
+            std.process.exit(1);
         }
 
         // On Windows replacing the executable fails with
@@ -628,7 +628,7 @@ pub fn rebuild(allocator: std.mem.Allocator, argv: []const []const u8, force_reb
         try cmd.executeSync();
 
         // Rebuild and rerun successful. Exit the current.
-        std.os.exit(0);
+        std.process.exit(0);
     }
 }
 
@@ -668,12 +668,12 @@ pub fn getCCVersion(c: *BuildConfig) ![]const u8 {
         .Exited => |exit_val| {
             if (exit_val != 0) {
                 std.debug.print("ERROR: Could not get the compiler version. Exit status: {}\n", .{exit_val});
-                std.os.exit(exit_val);
+                std.process.exit(exit_val);
             }
         },
         else => {
             std.debug.print("ERROR: Could not get the compiler version. Result: {}\n", .{output.term});
-            std.os.exit(1);
+            std.process.exit(1);
         },
     }
 
@@ -942,7 +942,7 @@ pub fn buildSource(c: BuildConfig, src: []const u8, dependencies: anytype) ![]co
             try cmd.executeSync();
         } else {
             std.debug.print("ERROR: Not implemented this file type \"{s}\"\n", .{src});
-            std.os.exit(1);
+            std.process.exit(1);
         }
     }
 

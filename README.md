@@ -108,3 +108,10 @@ Run in the embedded hardware:
 ```sh
 ./build prod_flash SERIAL=/dev/ttyACM0
 ```
+
+## Zig Version
+
+```console
+$ zig version
+0.13.0
+```

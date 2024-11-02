@@ -103,8 +103,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     libprod.linkLibC();
-    for (include_dirs) |dir| libprod.addIncludePath(.{ .path = dir[2..] });
-    libprod.addCSourceFiles(&production_lib_files, &host_zigcc_cflags);
+    for (include_dirs) |dir| libprod.addIncludePath(b.path(dir[2..]));
+    libprod.addCSourceFiles(.{ .files = &production_lib_files, .flags = &host_zigcc_cflags });
 
     // Static library with test code
     const libtest = b.addStaticLibrary(.{
@@ -114,9 +114,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     libtest.linkLibC();
-    for (include_dirs) |dir| libtest.addIncludePath(.{ .path = dir[2..] });
-    libtest.addCSourceFiles(&test_lib_files, &host_zigcc_cflags);
-    libtest.addCSourceFiles(test_runners_files, &host_zigcc_cflags);
+    for (include_dirs) |dir| libtest.addIncludePath(b.path(dir[2..]));
+    libtest.addCSourceFiles(.{ .files = &test_lib_files, .flags = &host_zigcc_cflags });
+    libtest.addCSourceFiles(.{ .files = test_runners_files, .flags = &host_zigcc_cflags });
 
     // Static library with unity code
     const libunity = b.addStaticLibrary(.{
@@ -126,8 +126,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = .ReleaseFast,
     });
     libunity.linkLibC();
-    for (include_dirs) |dir| libunity.addIncludePath(.{ .path = dir[2..] });
-    libunity.addCSourceFiles(&test_unity_files, &host_zigcc_cflags);
+    for (include_dirs) |dir| libunity.addIncludePath(b.path(dir[2..]));
+    libunity.addCSourceFiles(.{ .files = &test_unity_files, .flags = &host_zigcc_cflags });
 
     // Test executable
     const exectest = b.addExecutable(.{
@@ -141,8 +141,8 @@ pub fn build(b: *std.Build) !void {
     exectest.linkLibrary(libprod);
     exectest.linkLibrary(libtest);
     exectest.linkLibrary(libunity);
-    for (include_dirs) |dir| exectest.addIncludePath(.{ .path = dir[2..] });
-    exectest.addCSourceFiles(&test_exe_files, &host_zigcc_cflags);
+    for (include_dirs) |dir| exectest.addIncludePath(b.path(dir[2..]));
+    exectest.addCSourceFiles(.{ .files = &test_exe_files, .flags = &host_zigcc_cflags });
 
     const run_test = b.addRunArtifact(exectest);
     test_step.dependOn(&run_test.step);
@@ -157,12 +157,12 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(execprod);
     execprod.linkLibC();
-    for (include_dirs) |dir| execprod.addIncludePath(.{ .path = dir[2..] });
+    for (include_dirs) |dir| execprod.addIncludePath(b.path(dir[2..]));
     execprod.linkLibrary(libprod);
-    execprod.addCSourceFiles(&production_exe_files, &host_zigcc_cflags);
+    execprod.addCSourceFiles(.{ .files = &production_exe_files, .flags = &host_zigcc_cflags });
 
-    if (target.os_tag == .windows or
-        (target.os_tag == null and builtin.os.tag == .windows))
+    if (target.query.os_tag == .windows or
+        (target.query.os_tag == null and builtin.os.tag == .windows))
     {
         execprod.linkSystemLibrary("opengl32");
         execprod.linkSystemLibrary("gdi32");
@@ -179,7 +179,7 @@ pub fn build(b: *std.Build) !void {
     // Build tool executable
     const execbuildtool = b.addExecutable(.{
         .name = "build",
-        .root_source_file = .{ .path = "build.zig" },
+        .root_source_file = b.path("build.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -603,7 +603,7 @@ fn show_help_message_and_exit(program: []const u8, error_message: ?[]const u8) v
     , .{program});
     if (error_message) |message| {
         std.debug.print("{s}\n", .{message});
-        std.os.exit(1);
+        std.process.exit(1);
     }
     std.debug.print(
         \\
@@ -645,7 +645,7 @@ fn show_help_message_and_exit(program: []const u8, error_message: ?[]const u8) v
         \\    --clang                   use the host CLANG compiler
         \\
     , .{program});
-    std.os.exit(1);
+    std.process.exit(1);
 }
 
 fn target_clean() !void {
@@ -881,7 +881,7 @@ fn run_exec_prod() !void {
         try cmd.add(.{ exe, "1", "2" });
     } else {
         std.debug.print("ERROR: Running \"{s}\" is not implemented for the architecture \"{s}\"\n", .{ exe, config.arch });
-        std.os.exit(1);
+        std.process.exit(1);
     }
 
     // Qemu commands:
@@ -926,7 +926,7 @@ fn run_exec_test() !void {
         try cmd.add(.{ exe, "-s" });
     } else {
         std.debug.print("ERROR: Simulation of \"{s}\" is not implemented for the architecture \"{s}\"\n", .{ exe, config.arch });
-        std.os.exit(1);
+        std.process.exit(1);
     }
 
     const output = try cmd.executeSyncGetOutputTimeout(0.1);
@@ -937,7 +937,7 @@ fn run_exec_test() !void {
     const FAIL = if (std.mem.eql(u8, config.arch, "host") and builtin.os.tag == .windows) "\r\nFAIL\r\n" else "\nFAIL\n";
     if (std.mem.indexOf(u8, output.stdout, OK) == null or std.mem.indexOf(u8, output.stdout, FAIL) != null) {
         std.debug.print("ERROR: Test failed!\n", .{});
-        std.os.exit(1);
+        std.process.exit(1);
     } else {
         std.debug.print("INFO: Test passed!\n", .{});
     }
@@ -968,7 +968,7 @@ fn flash_prod() !void {
         try cmd.executeSync();
     } else {
         std.debug.print("ERROR: Flashing \"{s}\" is not implemented for the architecture \"{s}\"\n", .{ exe, config.arch });
-        std.os.exit(1);
+        std.process.exit(1);
     }
 
     if (nomake.verbosity >= nomake.verb_info)
@@ -997,7 +997,7 @@ fn flash_test() !void {
         try cmd.executeSync();
     } else {
         std.debug.print("ERROR: Flashing \"{s}\" is not implemented for the architecture \"{s}\"\n", .{ exe, config.arch });
-        std.os.exit(1);
+        std.process.exit(1);
     }
 
     if (nomake.verbosity >= nomake.verb_info)
